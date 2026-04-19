@@ -6,13 +6,32 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C530D34D2F87E6860053CA04 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = C530D34C2F87E6860053CA04 /* MWDATCamera */; };
+		C530D34F2F87E6860053CA04 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = C530D34E2F87E6860053CA04 /* MWDATCore */; };
+		C530D3512F87E6860053CA04 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = C530D3502F87E6860053CA04 /* MWDATMockDevice */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		C530D33D2F87E5B70053CA04 /* MaxAIAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MaxAIAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C530D3532F87E9E70053CA04 /* Exceptions for "MaxAIAssistant" folder in "MaxAIAssistant" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = C530D33C2F87E5B70053CA04 /* MaxAIAssistant */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C530D33F2F87E5B70053CA04 /* MaxAIAssistant */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C530D3532F87E9E70053CA04 /* Exceptions for "MaxAIAssistant" folder in "MaxAIAssistant" target */,
+			);
 			path = MaxAIAssistant;
 			sourceTree = "<group>";
 		};
@@ -23,6 +42,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C530D34D2F87E6860053CA04 /* MWDATCamera in Frameworks */,
+				C530D3512F87E6860053CA04 /* MWDATMockDevice in Frameworks */,
+				C530D34F2F87E6860053CA04 /* MWDATCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +87,9 @@
 			);
 			name = MaxAIAssistant;
 			packageProductDependencies = (
+				C530D34C2F87E6860053CA04 /* MWDATCamera */,
+				C530D34E2F87E6860053CA04 /* MWDATCore */,
+				C530D3502F87E6860053CA04 /* MWDATMockDevice */,
 			);
 			productName = MaxAIAssistant;
 			productReference = C530D33D2F87E5B70053CA04 /* MaxAIAssistant.app */;
@@ -94,6 +119,9 @@
 			);
 			mainGroup = C530D3342F87E5B70053CA04;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C530D34B2F87E6860053CA04 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C530D33E2F87E5B70053CA04 /* Products */;
 			projectDirPath = "";
@@ -256,6 +284,9 @@
 				DEVELOPMENT_TEAM = 5VZ464VTSQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MaxAIAssistant/Info.plist;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Needed to connect to Meta glasses";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Needed to stream video from glasses";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -288,6 +319,9 @@
 				DEVELOPMENT_TEAM = 5VZ464VTSQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MaxAIAssistant/Info.plist;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Needed to connect to Meta glasses";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Needed to stream video from glasses";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -332,6 +366,35 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C530D34B2F87E6860053CA04 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.5.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C530D34C2F87E6860053CA04 /* MWDATCamera */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C530D34B2F87E6860053CA04 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCamera;
+		};
+		C530D34E2F87E6860053CA04 /* MWDATCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C530D34B2F87E6860053CA04 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCore;
+		};
+		C530D3502F87E6860053CA04 /* MWDATMockDevice */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C530D34B2F87E6860053CA04 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATMockDevice;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = C530D3352F87E5B70053CA04 /* Project object */;
 }

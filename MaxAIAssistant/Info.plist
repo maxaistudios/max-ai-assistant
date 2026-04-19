@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>maxaiassistant</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>fb-viewapp</string>
+	</array>
+	<key>MWDAT</key>
+	<dict>
+		<key>AppLinkURLScheme</key>
+		<string>maxaiassistant://</string>
+		<key>ClientToken</key>
+		<string>YOUR_META_CLIENT_TOKEN</string>
+		<key>MetaAppID</key>
+		<string>YOUR_META_APP_ID</string>
+		<key>TeamID</key>
+		<string>$(DEVELOPMENT_TEAM)</string>
+	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_mwdat._tcp</string>
+		<string>_mwdat._udp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Required to connect to your Ray-Ban Meta glasses over Wi-Fi for live video streaming.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Required to access your Ray-Ban Meta glasses camera for live streaming.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-peripheral</string>
+		<string>external-accessory</string>
+	</array>
+	<key>UISupportedExternalAccessoryProtocols</key>
+	<array>
+		<string>com.meta.ar.wearable</string>
+	</array>
+</dict>
+</plist>

@@ -1,0 +1,51 @@
+# ──────────────────────────────────────────────
+# Xcode & iOS
+# ──────────────────────────────────────────────
+build/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+
+# ──────────────────────────────────────────────
+# Swift Package Manager
+# ──────────────────────────────────────────────
+.swiftpm/xcode/
+Package.resolved
+
+# ──────────────────────────────────────────────
+# Environment & Secrets  (CRITICAL — never commit these)
+# ──────────────────────────────────────────────
+.env
+*.key
+*.pem
+credentials.json
+
+# ──────────────────────────────────────────────
+# Runtime data files  (app sandbox, not source)
+# ──────────────────────────────────────────────
+Documents/VisualMemories/
+
+# Ignore loose JSON data files but NOT Xcode asset-catalog metadata.
+# Without the xcassets exception, Contents.json files inside asset catalogs
+# would be ignored, breaking icons and colours on a fresh clone.
+*.json
+!**/*.xcassets/**
+!index.json.example
+
+# ──────────────────────────────────────────────
+# macOS
+# ──────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
