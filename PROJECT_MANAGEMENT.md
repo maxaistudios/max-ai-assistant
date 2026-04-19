@@ -1,5 +1,14 @@
 # Project Management Overview
 
+## Beta Status
+
+| Channel | Link | Status |
+|---|---|---|
+| **TestFlight Public Beta** | [testflight.apple.com/join/781dSq1G](https://testflight.apple.com/join/781dSq1G) | Live — iOS 26.2 |
+| **GitHub (Open Core source)** | [github.com/maxaistudios/max-ai-assistant](https://github.com/maxaistudios/max-ai-assistant) | Public |
+
+---
+
 ## Current Development State
 
 ### What Is Fully Implemented
@@ -8,6 +17,7 @@ The following components are production-quality and actively working:
 
 | Component | Status | Notes |
 |---|---|---|
+| **TestFlight public beta** | Live | [testflight.apple.com/join/781dSq1G](https://testflight.apple.com/join/781dSq1G) — iOS 26.2 |
 | **Ray-Ban Meta glasses integration** | Working | MWDATCore/MWDATCamera v0.5.0; OAuth via Meta View app; live video stream + photo capture |
 | **AI orchestration** (`AgentBrain`) | Working | Intent classification, parallel memory retrieval, context building, JSON response parsing |
 | **Three-tier memory system** | Working | Facts/Episodes/Summaries with NLEmbedding semantic search, background mining, summarisation, and fact consolidation |

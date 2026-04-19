@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -33,10 +35,6 @@
 		<string>_mwdat._tcp</string>
 		<string>_mwdat._udp</string>
 	</array>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Required to connect to your Ray-Ban Meta glasses over Wi-Fi for live video streaming.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Required to access your Ray-Ban Meta glasses camera for live streaming.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-peripheral</string>

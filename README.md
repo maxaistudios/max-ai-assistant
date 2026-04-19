@@ -2,6 +2,11 @@
 
 An iOS companion app for **Ray-Ban Meta smart glasses** that provides a persistent, memory-aware AI assistant with live vision, voice activation, web search, and a searchable visual memory gallery.
 
+> **Try it now — no Xcode required**
+> [![TestFlight](https://img.shields.io/badge/TestFlight-Beta-blue?logo=apple)](https://testflight.apple.com/join/781dSq1G)
+> Install the [TestFlight app](https://apps.apple.com/app/testflight/id899247664) on your iPhone, then tap the link above to join the beta.
+> Requires iOS 26.2 · iPhone with Bluetooth + Ray-Ban Meta glasses recommended (works without glasses in chat-only mode)
+
 ---
 
 ## Table of Contents
@@ -200,6 +205,25 @@ Max uses a **three-tier memory architecture** persisted as JSON files in the app
 - **Episode mining** — every 10 new episodes, a background pass scans unreviewed QA pairs to elevate missed personal facts.
 - **Episode summarisation** — when episode text exceeds ~2 000 words, the oldest 40 episodes are compressed by GPT into a summary chapter.
 - **Fact consolidation** — when facts exceed 12 entries, an AI pass deduplicates and merges them.
+
+---
+
+## Beta Testing (TestFlight)
+
+The fastest way to try Max AI Assistant is via the public TestFlight beta — no Xcode, no Apple Developer account needed.
+
+| Step | Action |
+|---|---|
+| 1 | Install **[TestFlight](https://apps.apple.com/app/testflight/id899247664)** from the App Store |
+| 2 | Open **[https://testflight.apple.com/join/781dSq1G](https://testflight.apple.com/join/781dSq1G)** on your iPhone |
+| 3 | Tap **Accept** → **Install** |
+| 4 | Open Max, go to **Settings**, and paste your OpenAI API key |
+| 5 | (Optional) Add a Serper API key for web/news search |
+| 6 | Put on your Ray-Ban Meta glasses and say **"Hey Max"** |
+
+**Minimum requirements:** iPhone running iOS 26.2 · Ray-Ban Meta Gen 2 glasses (optional — the app works in chat-only mode without glasses)
+
+**Sending feedback:** Shake your iPhone while in the app, or use the TestFlight app's **Send Beta Feedback** button. Crash reports are forwarded automatically.
 
 ---
 
