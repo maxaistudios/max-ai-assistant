@@ -16,6 +16,7 @@ xcuserdata/
 *.moved-aside
 *.xcuserstate
 *.xcscmblueprint
+Secrets.xcconfig
 
 # ──────────────────────────────────────────────
 # Swift Package Manager

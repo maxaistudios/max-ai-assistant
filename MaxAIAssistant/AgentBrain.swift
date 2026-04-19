@@ -480,6 +480,12 @@ final class AgentBrain: ObservableObject {
     /// Compresses the oldest episode batch into a summary chapter, then removes
     /// those episodes from the rolling buffer.  Keeps long-term context without
     /// growing the per-turn token count.
+    /// Convenience overload for call-sites (e.g. ContentView) that don't hold a
+    /// direct service reference. Resolves the active service from ServiceFactory.
+    nonisolated static func runSummarization() async {
+        await runSummarization(using: ServiceFactory.makeAIService())
+    }
+
     nonisolated static func runSummarization(using aiService: any AIServiceProtocol) async {
         let episodes = MemoryStore.shared.oldestEpisodesForSummary()
         guard !episodes.isEmpty else { return }

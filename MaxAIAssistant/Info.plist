@@ -22,9 +22,9 @@
 		<key>AppLinkURLScheme</key>
 		<string>maxaiassistant://</string>
 		<key>ClientToken</key>
-		<string>YOUR_META_CLIENT_TOKEN</string>
+		<string>$(META_CLIENT_TOKEN)</string>
 		<key>MetaAppID</key>
-		<string>YOUR_META_APP_ID</string>
+		<string>$(META_APP_ID)</string>
 		<key>TeamID</key>
 		<string>$(DEVELOPMENT_TEAM)</string>
 	</dict>

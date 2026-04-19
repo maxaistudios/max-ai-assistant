@@ -10,10 +10,12 @@
 		C530D34D2F87E6860053CA04 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = C530D34C2F87E6860053CA04 /* MWDATCamera */; };
 		C530D34F2F87E6860053CA04 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = C530D34E2F87E6860053CA04 /* MWDATCore */; };
 		C530D3512F87E6860053CA04 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = C530D3502F87E6860053CA04 /* MWDATMockDevice */; };
+		C530D3732F9528B90053CA04 /* Secrets.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = C530D3722F9528B90053CA04 /* Secrets.xcconfig */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		C530D33D2F87E5B70053CA04 /* MaxAIAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MaxAIAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C530D3722F9528B90053CA04 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -54,6 +56,7 @@
 		C530D3342F87E5B70053CA04 = {
 			isa = PBXGroup;
 			children = (
+				C530D3722F9528B90053CA04 /* Secrets.xcconfig */,
 				C530D33F2F87E5B70053CA04 /* MaxAIAssistant */,
 				C530D33E2F87E5B70053CA04 /* Products */,
 			);
@@ -137,6 +140,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C530D3732F9528B90053CA04 /* Secrets.xcconfig in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -276,6 +280,7 @@
 		};
 		C530D3492F87E5B90053CA04 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C530D3722F9528B90053CA04 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -311,6 +316,7 @@
 		};
 		C530D34A2F87E5B90053CA04 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C530D3722F9528B90053CA04 /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
