@@ -110,7 +110,11 @@ final class VisualMemoryStore: ObservableObject {
             try? data.write(to: fileURL)
         }
 
-        saveToPhotoLibrary(image: image)
+        saveToPhotoLibrary(
+            image: image,
+            latitude: latitude,
+            longitude: longitude
+        )
 
         let vm = VisualMemory(
             imageFileName: fileName,
@@ -127,6 +131,16 @@ final class VisualMemoryStore: ObservableObject {
         memories.insert(vm, at: 0)
         persist()
         print("[VisualMemory] Saved: '\(aiSummary)' | objects: \(aiObjects.count) | tags: \(aiTags)")
+    }
+
+    /// Public helper for raw capture flows (before AI "Remember This").
+    /// Saves directly to Camera Roll with location metadata when available.
+    func saveCaptureToPhotoLibrary(
+        image: UIImage,
+        latitude: Double?,
+        longitude: Double?
+    ) {
+        saveToPhotoLibrary(image: image, latitude: latitude, longitude: longitude)
     }
 
     // MARK: Update (user note)
@@ -317,14 +331,27 @@ final class VisualMemoryStore: ObservableObject {
     /// Album grouping is intentionally omitted — reading the album list requires full library
     /// access (NSPhotoLibraryUsageDescription) which is more invasive than needed. Images land
     /// in "Recents" in Photos; the app keeps its own indexed copy in Documents/VisualMemories/.
-    private func saveToPhotoLibrary(image: UIImage) {
+    private func saveToPhotoLibrary(
+        image: UIImage,
+        latitude: Double?,
+        longitude: Double?
+    ) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-            guard status == .authorized || status == .limited else { return }
+            guard status == .authorized || status == .limited else {
+                print("[VisualMemory] Camera roll permission denied (\(status.rawValue))")
+                return
+            }
             PHPhotoLibrary.shared().performChanges({
-                PHAssetChangeRequest.creationRequestForAsset(from: image)
+                let req = PHAssetChangeRequest.creationRequestForAsset(from: image)
+                req.creationDate = Date()
+                if let lat = latitude, let lon = longitude {
+                    req.location = CLLocation(latitude: lat, longitude: lon)
+                }
             }, completionHandler: { _, error in
                 if let error {
                     print("[VisualMemory] Camera roll save failed: \(error.localizedDescription)")
+                } else {
+                    print("[VisualMemory] Camera roll save OK")
                 }
             })
         }

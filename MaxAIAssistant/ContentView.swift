@@ -27,6 +27,9 @@ struct ContentView: View {
     @State private var quickSession:       StreamSession?
     @State private var quickStateToken:    (any AnyListenerToken)?
     @State private var quickPhotoToken:    (any AnyListenerToken)?
+    @State private var quickFrameToken:    (any AnyListenerToken)?
+    // Guard to ensure one capturePhoto call per quick session.
+    @State private var quickCaptureRequested = false
     // Cached so subsequent quickCaptures skip device discovery this session
     @State private var cachedDeviceId:     DeviceIdentifier?
     // Hard timeout — cancelled when photo arrives, fires if glasses don't respond
@@ -47,6 +50,9 @@ struct ContentView: View {
     @AppStorage("speechLocale")   private var speechLocale = "en-US"
     @State private var showSettings    = false
     @State private var showPhotoAsk    = false
+    // Internal flag used when auto-capturing a frame for "what do I see" style queries.
+    // Prevents the photo ask sheet from popping while we are capturing only for analysis.
+    @State private var suppressPhotoAskForAutoVision = false
 
     // MARK: - Destructive action confirmation
     @State private var confirmClearMemory  = false
@@ -55,6 +61,9 @@ struct ContentView: View {
     // MARK: - Visual memories
     @State private var showVisualMemories  = false
     @State private var isSavingMemory      = false
+    // Dedup guards for auto-indexing captures into visual memory.
+    @State private var autoIndexedCaptureKeys: Set<String> = []
+    @State private var autoIndexingCaptureKeys: Set<String> = []
 
     // MARK: - Body
 
@@ -296,36 +305,73 @@ struct ContentView: View {
         guard !isSavingMemory else { return }
         isSavingMemory = true
         Task { @MainActor in
-            // Ensure API key is synced before any AI call (key is lazy-set on first query otherwise)
-            OpenAIService.shared.apiKey = apiKey
             // Fetch location with a 5-second timeout so we never hang forever
             let (locationName, coord) = await fetchLocationWithTimeout()
-            // Gather known personal facts to ground the description
-            // (e.g. dog name, wife's name) so the AI uses them rather than guessing
-            let knownFacts: String? = await Task.detached(priority: .userInitiated) {
-                let facts = MemoryStore.shared.all.filter { $0.tags.contains("fact") }
-                guard !facts.isEmpty else { return nil }
-                return facts.prefix(15).map { "- \($0.text)" }.joined(separator: "\n")
-            }.value
-            // Single AI analysis call with location + personal context.
-            // Uses the injected service from AgentBrain so both OSS and Pro targets
-            // route through the correct backend (LocalAIService vs ProxyAIService).
-            let analysis = await AgentBrain.shared.analyzeVisualMemory(
-                image: photo, locationName: locationName, userFacts: knownFacts
+            // Keep roll save idempotent and ensure manual remember includes location metadata.
+            VisualMemoryStore.shared.saveCaptureToPhotoLibrary(
+                image: photo,
+                latitude: coord?.latitude,
+                longitude: coord?.longitude
             )
-            // Persist locally and to camera roll (objects let user search by item later)
-            VisualMemoryStore.shared.save(
-                image:         photo,
-                aiSummary:     analysis.summary,
-                aiDescription: analysis.description,
-                aiTags:        analysis.tags,
-                aiObjects:     analysis.objects,
-                locationName:  locationName,
-                latitude:      coord?.latitude,
-                longitude:     coord?.longitude
+            await createVisualMemoryEntry(
+                for: photo,
+                locationName: locationName,
+                coord: coord,
+                includeChatConfirmation: true,
+                captureKey: captureKey(for: photo)
             )
             isSavingMemory = false
-            // Confirm to user in chat — mention how many objects were indexed
+        }
+    }
+
+    /// Lightweight stable key for deduplicating repeated callbacks for the same frame/photo.
+    @MainActor
+    private func captureKey(for photo: UIImage) -> String {
+        guard let data = photo.jpegData(compressionQuality: 0.35) else {
+            return "fallback-\(photo.size.width)x\(photo.size.height)"
+        }
+        let prefix = data.prefix(64).base64EncodedString()
+        return "\(data.count)-\(prefix)"
+    }
+
+    /// Builds and stores a visual memory entry (AI summary + tags + objects).
+    @MainActor
+    private func createVisualMemoryEntry(
+        for photo: UIImage,
+        locationName: String?,
+        coord: CLLocationCoordinate2D?,
+        includeChatConfirmation: Bool,
+        captureKey: String?
+    ) async {
+        // Ensure API key is synced before AI call.
+        OpenAIService.shared.apiKey = apiKey
+        let knownFacts = knownFactsContext()
+
+        let analysis = await AgentBrain.shared.analyzeVisualMemory(
+            image: photo,
+            locationName: locationName,
+            userFacts: knownFacts
+        )
+
+        VisualMemoryStore.shared.save(
+            image:         photo,
+            aiSummary:     analysis.summary,
+            aiDescription: analysis.description,
+            aiTags:        analysis.tags,
+            aiObjects:     analysis.objects,
+            locationName:  locationName,
+            latitude:      coord?.latitude,
+            longitude:     coord?.longitude
+        )
+
+        if let key = captureKey {
+            autoIndexedCaptureKeys.insert(key)
+            if autoIndexedCaptureKeys.count > 200 {
+                autoIndexedCaptureKeys = Set(autoIndexedCaptureKeys.suffix(120))
+            }
+        }
+
+        if includeChatConfirmation {
             let objNote = analysis.objects.isEmpty ? "" : " I indexed \(analysis.objects.count) objects so you can find anything later."
             brain.chatHistory.append(ChatMessage(
                 role:      .assistant,
@@ -337,20 +383,64 @@ struct ContentView: View {
         }
     }
 
+    /// Pull a compact block of known facts to ground AI visual analysis.
+    @MainActor
+    private func knownFactsContext() -> String? {
+        let facts = MemoryStore.shared.all.filter { $0.tags.contains("fact") }
+        guard !facts.isEmpty else { return nil }
+        return facts.prefix(15).map { "- \($0.text)" }.joined(separator: "\n")
+    }
+
+    /// Saves every capture to Camera Roll and auto-indexes it in Visual Memories.
+    /// This runs for ALL capture paths, even when the user does not tap "Remember This".
+    @MainActor
+    private func processCapturedImage(_ photo: UIImage) {
+        let key = captureKey(for: photo)
+        if autoIndexedCaptureKeys.contains(key) || autoIndexingCaptureKeys.contains(key) { return }
+        autoIndexingCaptureKeys.insert(key)
+
+        Task { @MainActor in
+            defer { autoIndexingCaptureKeys.remove(key) }
+            let (locationName, coord) = await fetchLocationWithTimeout()
+            VisualMemoryStore.shared.saveCaptureToPhotoLibrary(
+                image: photo,
+                latitude: coord?.latitude,
+                longitude: coord?.longitude
+            )
+            await createVisualMemoryEntry(
+                for: photo,
+                locationName: locationName,
+                coord: coord,
+                includeChatConfirmation: false,
+                captureKey: key
+            )
+        }
+    }
+
     /// Location fetch with a 5-second timeout; returns (nil, nil) if unavailable or denied.
     @MainActor
     private func fetchLocationWithTimeout() async -> (String?, CLLocationCoordinate2D?) {
-        await withCheckedContinuation { cont in
-            var done = false
-            // Timeout fallback — both closures run on @MainActor so `done` is safe
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                guard !done else { return }
-                done = true
+        // ResumeOnce guarantees the CheckedContinuation is resumed exactly once even
+        // when both the timeout Task and the location callback race.
+        // Using a reference type (class) avoids the Swift 6 @Sendable mutable-capture
+        // error that crashes when a `var` is captured by two @Sendable closures.
+        final class ResumeOnce: @unchecked Sendable {
+            var fired = false
+        }
+        let once = ResumeOnce()
+
+        return await withCheckedContinuation { cont in
+            // Timeout: Task.sleep keeps us inside Swift concurrency and avoids
+            // mixing GCD with actor-isolated continuations (crash in Swift 6).
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(5))
+                guard !once.fired else { return }
+                once.fired = true
                 cont.resume(returning: (nil, nil))
             }
             LocationManager.shared.fetchLocation { name, coord in
-                guard !done else { return }
-                done = true
+                guard !once.fired else { return }
+                once.fired = true
                 cont.resume(returning: (name, coord))
             }
         }
@@ -857,6 +947,8 @@ struct ContentView: View {
     func startDiscoveryAndStream() {
         // Prevent double-start: bail if already connecting or a session exists
         guard !isConnecting, !isStreaming, streamSession == nil else { return }
+        // Avoid AVAudioSession contention between speech recognition and camera/stream setup.
+        if speechManager.isListening { speechManager.stopListening() }
         isConnecting  = true
         statusMessage = "Searching for glasses…"
         triggerLocalNetworkPrompt()
@@ -905,8 +997,13 @@ struct ContentView: View {
             if let img = UIImage(data: photoData.data) {
                 Task { @MainActor in
                     self.capturedPhoto = img
+                    self.processCapturedImage(img)
                     self.isCapturing   = false
-                    self.showPhotoAsk  = true
+                    if self.suppressPhotoAskForAutoVision {
+                        self.suppressPhotoAskForAutoVision = false
+                    } else {
+                        self.showPhotoAsk  = true
+                    }
                 }
             }
         }
@@ -958,15 +1055,30 @@ struct ContentView: View {
     func captureSDKPhoto() {
         guard let session = streamSession else {
             capturedPhoto = currentFrame
-            if capturedPhoto != nil { showPhotoAsk = true }
+            if capturedPhoto != nil {
+                if let photo = capturedPhoto { processCapturedImage(photo) }
+                if suppressPhotoAskForAutoVision {
+                    suppressPhotoAskForAutoVision = false
+                } else {
+                    showPhotoAsk = true
+                }
+            }
             return
         }
+        if speechManager.isListening { speechManager.stopListening() }
         isCapturing = true
         let ok = session.capturePhoto(format: .jpeg)
         if !ok {
             capturedPhoto = currentFrame
             isCapturing   = false
-            if capturedPhoto != nil { showPhotoAsk = true }
+            if capturedPhoto != nil {
+                if let photo = capturedPhoto { processCapturedImage(photo) }
+                if suppressPhotoAskForAutoVision {
+                    suppressPhotoAskForAutoVision = false
+                } else {
+                    showPhotoAsk = true
+                }
+            }
         }
     }
 
@@ -977,6 +1089,7 @@ struct ContentView: View {
     /// • Cancels automatically after 12 s with a clear message if glasses can't connect.
     func quickCapture() {
         guard !isCapturing else { return }
+        if speechManager.isListening { speechManager.stopListening() }
         isCapturing   = true
         statusMessage = "Connecting to glasses…"
         triggerLocalNetworkPrompt()
@@ -1011,10 +1124,12 @@ struct ContentView: View {
         captureTimeoutTask = nil
         isCapturing        = false
         statusMessage      = message
+        quickCaptureRequested = false
         cachedDeviceId     = nil   // clear so next attempt re-discovers
         devicesToken       = nil
         quickStateToken    = nil
         quickPhotoToken    = nil
+        quickFrameToken    = nil
         Task { await quickSession?.stop() }
         quickSession       = nil
     }
@@ -1025,6 +1140,7 @@ struct ContentView: View {
         let session = StreamSession(streamSessionConfig: config,
                                     deviceSelector: SpecificDeviceSelector(device: deviceId))
         quickSession = session
+        quickCaptureRequested = false
 
         quickPhotoToken = session.photoDataPublisher.listen { photoData in
             if let img = UIImage(data: photoData.data) {
@@ -1033,13 +1149,47 @@ struct ContentView: View {
                     self.captureTimeoutTask?.cancel()
                     self.captureTimeoutTask = nil
                     self.capturedPhoto   = img
+                    self.processCapturedImage(img)
                     self.isCapturing     = false
                     self.statusMessage   = "Photo captured"
-                    self.showPhotoAsk    = true
+                    if self.suppressPhotoAskForAutoVision {
+                        self.suppressPhotoAskForAutoVision = false
+                    } else {
+                        self.showPhotoAsk    = true
+                    }
+                    self.quickCaptureRequested = false
                     Task { await session.stop() }
                     self.quickSession    = nil
                     self.quickPhotoToken = nil
                     self.quickStateToken = nil
+                    self.quickFrameToken = nil
+                }
+            }
+        }
+
+        // Fallback path: if capturePhoto succeeds but SDK never publishes photoData,
+        // use the first available frame so voice queries still get visual context.
+        quickFrameToken = session.videoFramePublisher.listen { frame in
+            if let img = frame.makeUIImage() {
+                Task { @MainActor in
+                    guard self.isCapturing else { return }
+                    self.captureTimeoutTask?.cancel()
+                    self.captureTimeoutTask = nil
+                    self.capturedPhoto = img
+                    self.processCapturedImage(img)
+                    self.isCapturing = false
+                    self.statusMessage = "Frame captured"
+                    if self.suppressPhotoAskForAutoVision {
+                        self.suppressPhotoAskForAutoVision = false
+                    } else {
+                        self.showPhotoAsk = true
+                    }
+                    self.quickCaptureRequested = false
+                    Task { await session.stop() }
+                    self.quickSession = nil
+                    self.quickPhotoToken = nil
+                    self.quickStateToken = nil
+                    self.quickFrameToken = nil
                 }
             }
         }
@@ -1047,9 +1197,13 @@ struct ContentView: View {
         // Attempt capture at the earliest possible state (.starting is faster than .streaming)
         quickStateToken = session.statePublisher.listen { state in
             Task { @MainActor in
-                if state == .starting || state == .streaming {
+                if (state == .starting || state == .streaming) && !self.quickCaptureRequested {
+                    self.quickCaptureRequested = true
                     let ok = session.capturePhoto(format: .jpeg)
-                    if !ok { self.statusMessage = "Photo capture failed — try again" }
+                    if !ok {
+                        self.quickCaptureRequested = false
+                        self.statusMessage = "Photo capture failed — try again"
+                    }
                 }
                 if state == .stopped && self.isCapturing {
                     // Session ended without delivering a photo
@@ -1081,38 +1235,94 @@ struct ContentView: View {
         guard !q.isEmpty else { return }
         textInput = ""
         isInputFocused = false
-        handleQuery(q, image: capturedPhoto)
+        // Force vision when a captured photo is visible — the user is asking about it.
+        handleQuery(q, image: capturedPhoto, forceVision: capturedPhoto != nil)
     }
 
     func sendPhotoQuestion() {
         let q = textInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         textInput = ""
-        handleQuery(q, image: capturedPhoto)
+        // User tapped "Ask Max" directly on the captured photo sheet — always use vision.
+        handleQuery(q, image: capturedPhoto, forceVision: true)
     }
 
-    func handleQuery(_ query: String, image: UIImage?) {
-        // Pass whichever image is available — captured photo takes priority,
-        // live frame is a fallback. Intent (vision vs chat) is classified by GPT
-        // inside AgentBrain, so no keyword check is needed here.
-        let frameToUse = image ?? currentFrame
+    /// Delegates the "should we auto-capture?" decision to the AI service
+    /// instead of relying on hardcoded phrase matching.
+    private func shouldAutoAttachVisionImage(for query: String) async -> Bool {
+        await AgentBrain.shared.shouldAutoCaptureImage(for: query)
+    }
 
-        isAnalyzing = true
-        aiResponse  = frameToUse != nil ? "Looking…" : "Thinking…"
-        OpenAIService.shared.apiKey = apiKey
+    /// Waits for capturedPhoto to change (used by auto-vision capture flow).
+    @MainActor
+    private func waitForCapturedPhotoChange(from previous: UIImage?, timeoutSeconds: Double) async -> UIImage? {
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeoutSeconds {
+            if let latest = capturedPhoto {
+                if let previous {
+                    if latest !== previous { return latest }
+                } else {
+                    return latest
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(120))
+        }
+        return nil
+    }
 
-        let dm = debugMode     // capture for background Task
-        Task {
+    /// Ensures we have an image for "what do I see" style requests.
+    /// - If stream is on: use live frame, or trigger SDK photo capture.
+    /// - If stream is off: run one-shot quick capture.
+    @MainActor
+    private func autoCaptureImageForVisionQuery() async -> UIImage? {
+        if let frame = currentFrame { return frame }
+        let previous = capturedPhoto
+        suppressPhotoAskForAutoVision = true
+        if isStreaming {
+            captureSDKPhoto()
+            let image = await waitForCapturedPhotoChange(from: previous, timeoutSeconds: 3.5)
+            if image == nil { suppressPhotoAskForAutoVision = false }
+            return image
+        } else {
+            quickCapture()
+            let image = await waitForCapturedPhotoChange(from: previous, timeoutSeconds: 13.0)
+            if image == nil { suppressPhotoAskForAutoVision = false }
+            return image
+        }
+    }
+
+    func handleQuery(_ query: String, image: UIImage?, forceVision: Bool = false) {
+        Task { @MainActor in
+            // Pass whichever image is available — captured photo takes priority,
+            // live frame is a fallback.
+            var frameToUse = image ?? currentFrame
+            var shouldForceVision = forceVision
+            // Voice/text queries like "what do I see?" should auto-capture an image.
+            let shouldAutoCapture = await shouldAutoAttachVisionImage(for: query)
+            if frameToUse == nil && shouldAutoCapture {
+                aiResponse = "Capturing image…"
+                frameToUse = await autoCaptureImageForVisionQuery()
+                if frameToUse != nil { shouldForceVision = true }
+            }
+
+            isAnalyzing = true
+            aiResponse  = frameToUse != nil ? "Looking…" : "Thinking…"
+            OpenAIService.shared.apiKey = apiKey
+
+            let dm = debugMode     // capture for background Task
             do {
-                let response = try await AgentBrain.shared.respond(to: query, image: frameToUse, debugMode: dm)
-                await MainActor.run { isAnalyzing = false; aiResponse = ""; speechManager.speak(response) }
+                let response = try await AgentBrain.shared.respond(
+                    to: query, image: frameToUse, debugMode: dm, forceVision: shouldForceVision
+                )
+                isAnalyzing = false
+                aiResponse = ""
+                speechManager.speak(response)
             } catch {
                 let msg = error.localizedDescription
-                await MainActor.run {
-                    isAnalyzing = false; aiResponse = ""
-                    AgentBrain.shared.chatHistory.append(ChatMessage(role: .assistant, content: msg, timestamp: Date()))
-                    speechManager.speak(msg)
-                }
+                isAnalyzing = false
+                aiResponse = ""
+                AgentBrain.shared.chatHistory.append(ChatMessage(role: .assistant, content: msg, timestamp: Date()))
+                speechManager.speak(msg)
             }
         }
     }

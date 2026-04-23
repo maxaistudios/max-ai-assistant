@@ -285,13 +285,19 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 5VZ464VTSQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MaxAIAssistant/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Needed to connect to Meta glasses";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Needed to stream video from glasses";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Required to access your Ray-Ban Meta glasses camera for live streaming.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Required to connect to your Ray-Ban Meta glasses over Wi-Fi for live video streaming.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Max AI uses your location to provide context-aware information about your surroundings.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Max AI access to your microphone so you can use voice commands and dictate text to the AI assistant.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Allows the app to save downloaded images to your photo library.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Max AI uses speech recognition to process your voice commands through the smart glasses.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -301,7 +307,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = MaxAIAssistant.MaxAIAssistant;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -321,13 +327,19 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 5VZ464VTSQ;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MaxAIAssistant/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Needed to connect to Meta glasses";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Needed to stream video from glasses";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Required to access your Ray-Ban Meta glasses camera for live streaming.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Required to connect to your Ray-Ban Meta glasses over Wi-Fi for live video streaming.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Max AI uses your location to provide context-aware information about your surroundings.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Max AI access to your microphone so you can use voice commands and dictate text to the AI assistant.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Allows the app to save downloaded images to your photo library.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Max AI uses speech recognition to process your voice commands through the smart glasses.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -337,7 +349,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = MaxAIAssistant.MaxAIAssistant;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

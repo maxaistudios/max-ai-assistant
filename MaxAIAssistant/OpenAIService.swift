@@ -302,6 +302,36 @@ class OpenAIService {
         return .chat
     }
 
+    /// Small AI gate used before auto-capturing a photo for text/voice queries.
+    /// Returns true only when the user is explicitly asking for visual understanding.
+    func shouldAutoCaptureImage(for query: String) async -> Bool {
+        guard !resolvedKey.isEmpty else { return false }
+
+        let prompt = """
+        Decide whether this user message REQUIRES camera/image analysis.
+        Reply with exactly one word: yes or no.
+
+        Answer "yes" only if the user is asking about what they are seeing, what is in front of them, or to describe/analyze "this" visually.
+        Answer "no" for normal chat, memory questions, search/news requests, coding/help tasks, or anything that does not clearly require visual input.
+
+        Message: "\(query.prefix(250))"
+        Decision:
+        """
+
+        let body: [String: Any] = [
+            "model": "gpt-4o-mini",
+            "max_tokens": 3,
+            "temperature": 0,
+            "messages": [["role": "user", "content": prompt]]
+        ]
+
+        let raw = ((try? await post(body: body)) ?? "no")
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return raw.contains("yes")
+    }
+
     // MARK: - Visual Memory agent
     //
     // Dedicated agent that analyses a snapshot being saved as a "memory".

@@ -99,7 +99,10 @@ final class AgentBrain: ObservableObject {
 
     // MARK: - Main entry point
 
-    func respond(to query: String, image: UIImage? = nil, debugMode: Bool = false) async throws -> String {
+    /// - Parameter forceVision: When `true` the image is always sent to GPT, skipping intent
+    ///   classification.  Pass `true` from explicit photo-ask flows so the user's question is
+    ///   always answered in the context of the captured image rather than as a plain chat message.
+    func respond(to query: String, image: UIImage? = nil, debugMode: Bool = false, forceVision: Bool = false) async throws -> String {
         isThinking = true
         defer { isThinking = false }
 
@@ -112,14 +115,16 @@ final class AgentBrain: ObservableObject {
         // "I look forward to seeing you" → .chat, not .vision
         // "I'm searching for meaning" → .chat, not .search
         async let intentTask  = aiService.classifyIntent(query: query, hasImage: image != nil)
-        async let memCtxTask  = Task.detached(priority: .userInitiated) {
-            MemoryStore.shared.context(for: query, topK: 4)
-        }.value
-
+        // Read memory on the current actor to avoid forced sync hops into MainActor
+        // from detached tasks (which emit "unsafeForcedSync" runtime warnings).
+        let memCtx = MemoryStore.shared.context(for: query, topK: 4)
         let intent = await intentTask
-        let memCtx = await memCtxTask
 
-        let wantsVision = image != nil && intent == .vision
+        // When forceVision is true (user explicitly tapped "Ask Max" on a photo)
+        // we always send the image to GPT regardless of how the intent was classified.
+        // This prevents generic questions like "tell me about this" from being
+        // silently downgraded to plain chat and losing the image context.
+        let wantsVision = image != nil && (forceVision || intent == .vision)
         let wantsSearch = intent == .search || intent == .news
         let wantsNews   = intent == .news
 
@@ -267,6 +272,12 @@ final class AgentBrain: ObservableObject {
         userFacts:    String?
     ) async -> OpenAIService.VisualMemoryAnalysis {
         await aiService.analyzeVisualMemory(image: image, locationName: locationName, userFacts: userFacts)
+    }
+
+    /// Small helper for UI auto-capture flows: asks the injected AI service whether
+    /// this query should trigger an automatic image capture when no image is attached.
+    func shouldAutoCaptureImage(for query: String) async -> Bool {
+        await aiService.shouldAutoCaptureImage(for: query)
     }
 
     // MARK: - Session management
@@ -437,7 +448,9 @@ final class AgentBrain: ObservableObject {
 
     private nonisolated static func storeMemories(query: String, answer: String, vision: Bool) {
         let tags = vision ? ["qa", "vision"] : ["qa"]
-        MemoryStore.shared.add(text: "User asked: \(query)\nMax answered: \(answer)", tags: tags)
+        Task { @MainActor in
+            MemoryStore.shared.add(text: "User asked: \(query)\nMax answered: \(answer)", tags: tags)
+        }
     }
 
     private nonisolated static func extractAndStoreFactsWithAI(
@@ -450,7 +463,9 @@ final class AgentBrain: ObservableObject {
             assistantMessage: answer
         )
         for fact in facts {
-            MemoryStore.shared.add(text: fact, tags: ["fact"])
+            await MainActor.run {
+                MemoryStore.shared.add(text: fact, tags: ["fact"])
+            }
             print("[AgentBrain] AI-extracted fact: \(fact)")
         }
     }
@@ -469,7 +484,9 @@ final class AgentBrain: ObservableObject {
         let mined = await aiService.mineFactsFromEpisodes(episodes)
         var stored = 0
         for fact in mined {
-            MemoryStore.shared.add(text: fact, tags: ["fact"])
+            await MainActor.run {
+                MemoryStore.shared.add(text: fact, tags: ["fact"])
+            }
             stored += 1
             print("[AgentBrain] Mined: \(fact)")
         }
@@ -488,10 +505,16 @@ final class AgentBrain: ObservableObject {
 
     nonisolated static func runSummarization(using aiService: any AIServiceProtocol) async {
         let episodes = MemoryStore.shared.oldestEpisodesForSummary()
-        guard !episodes.isEmpty else { return }
+        guard !episodes.isEmpty else {
+            print("[AgentBrain] Summarisation skipped — no episodes available")
+            return
+        }
         print("[AgentBrain] Summarising \(episodes.count) episodes…")
         let summaryText = await aiService.summarizeEpisodes(episodes)
-        guard !summaryText.isEmpty else { return }
+        guard !summaryText.isEmpty else {
+            print("[AgentBrain] Summarisation skipped — model returned empty summary")
+            return
+        }
         MemoryStore.shared.commitSummary(text: summaryText, replacingFirstN: episodes.count)
         print("[AgentBrain] Summarisation complete ✅")
     }

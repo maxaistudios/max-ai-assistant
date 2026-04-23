@@ -44,6 +44,10 @@ protocol AIServiceProtocol: AnyObject {
     /// Runs in parallel with memory retrieval so it adds zero latency to the main turn.
     func classifyIntent(query: String, hasImage: Bool) async -> OpenAIService.MessageIntent
 
+    /// Lightweight agent decision: should we auto-capture an image for this query
+    /// when no image is currently attached (e.g. "what do I see?").
+    func shouldAutoCaptureImage(for query: String) async -> Bool
+
     // MARK: Vision helpers
 
     /// Analyses an image being saved as a visual memory.

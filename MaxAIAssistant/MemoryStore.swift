@@ -91,7 +91,8 @@ final class MemoryStore {
     private let maxSummariesInPrompt          = 3
     // Word-count based summarization: smarter than episode count because a few
     // long conversations matter more than 50 one-liners.
-    private let episodeWordCountThreshold     = 2_000  // ~2 000 words → compress
+    private let episodeWordCountThreshold     = 1_000  // ~1 000 words → compress
+    private let episodeCountThreshold         = 12     // also summarize after enough turns
     private let episodesToSummarizeCount      = 40     // how many to compress per pass
     private let maxEpisodesHardCap            = 200    // absolute ceiling before forced trim
     private let minSimilarity: Double         = 0.25
@@ -228,7 +229,7 @@ final class MemoryStore {
             let words = episodes.reduce(0) { acc, ep in
                 acc + ep.text.split(separator: " ").count
             }
-            return words > episodeWordCountThreshold
+            return words > episodeWordCountThreshold || episodes.count >= episodeCountThreshold
         }
     }
 
