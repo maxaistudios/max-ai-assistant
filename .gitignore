@@ -32,6 +32,7 @@ Package.resolved
 *.pem
 credentials.json
 Secrets.xcconfig
+logs.txt
 
 # ──────────────────────────────────────────────
 # Runtime data files  (app sandbox, not source)
