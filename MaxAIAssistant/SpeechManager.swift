@@ -2,6 +2,22 @@ import Foundation
 import Combine
 import Speech
 import AVFoundation
+import AudioToolbox
+
+// MARK: - Wake word engine abstraction
+//
+// Keep this protocol small so a real on-device engine (e.g. Porcupine) can drop in
+// later without touching SpeechManager flow/control logic.
+protocol WakeWordEngine {
+    /// Process one PCM frame (16-bit mono). Return true when wake word is detected.
+    func process(frame: [Int16]) -> Bool
+}
+
+/// Placeholder implementation.
+/// Always returns false for now; replace with Porcupine-backed implementation later.
+final class PlaceholderWakeWordEngine: WakeWordEngine {
+    func process(frame: [Int16]) -> Bool { false }
+}
 
 /// Two-stage wake word manager + TTS coordinator.
 ///
@@ -51,10 +67,31 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     private var task:      SFSpeechRecognitionTask?
     private let synth      = AVSpeechSynthesizer()
     private var speakingTTS = false
+    private var preferBluetoothHFPInput = false
+    private let wakeWordEngine: WakeWordEngine = PlaceholderWakeWordEngine()
+    private var continuousListeningRequested = false
+    private var resumeWorkItem: DispatchWorkItem?
+    private var restartWorkItem: DispatchWorkItem?
 
     override init() {
         super.init()
         synth.delegate = self
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioSessionInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioRouteChange(_:)),
+            name: AVAudioSession.routeChangeNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Public API
@@ -75,6 +112,47 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
                 self?.beginSession()
             }
         }
+    }
+
+    /// Starts continuous wake listening and prefers the glasses microphone route.
+    /// Use this for connected Ray-Ban Meta stream sessions.
+    func startContinuousWakeListening(preferBluetoothHFP: Bool = true) {
+        continuousListeningRequested = true
+        preferBluetoothHFPInput = preferBluetoothHFP
+        if isListening {
+            // Already active: do not restart on every trigger (route-change storms).
+            // Restarting repeatedly causes AVAudioEngine start failures.
+            return
+        }
+        startListening()
+    }
+
+    /// Stops the continuous wake-listening pipeline.
+    func stopContinuousWakeListening() {
+        continuousListeningRequested = false
+        resumeWorkItem?.cancel()
+        resumeWorkItem = nil
+        restartWorkItem?.cancel()
+        restartWorkItem = nil
+        stopListening()
+    }
+
+    var isContinuousWakeRequested: Bool { continuousListeningRequested }
+
+    /// Temporarily pause listening without clearing the user's "mic on" intent.
+    /// Used during capture flows that need an audio session handoff.
+    func pauseListeningTemporarily() {
+        guard isListening else { return }
+        tearDown()
+        task?.cancel(); task = nil
+        isListening = false
+        liveText = ""
+    }
+
+    /// Resume listening only if the user previously enabled continuous wake mode.
+    func resumeContinuousWakeListeningIfRequested() {
+        guard continuousListeningRequested, !isListening else { return }
+        startContinuousWakeListening(preferBluetoothHFP: preferBluetoothHFPInput)
     }
 
     /// Skip the wake word and immediately enter "listening for a question" mode.
@@ -107,6 +185,7 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         speakingTTS = true
         tearDown()              // stop mic, discard old engine
         task?.cancel(); task = nil
+        configureAudioSessionForTTS()
 
         let u = AVSpeechUtterance(string: text)
         // Use a voice matching the selected speech locale; fall back to en-US
@@ -134,6 +213,8 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
 
     private func beginSession() {
         guard isListening, !speakingTTS else { return }
+        // Avoid duplicate concurrent start attempts during route-change storms.
+        if engine?.isRunning == true { return }
         do {
             try startSession()
             // If activateDirectMode() was called before the session existed, enter awake now
@@ -145,10 +226,7 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
             }
         } catch {
             log("Session error: \(error.localizedDescription)")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                guard self?.isListening == true else { return }
-                self?.beginSession()
-            }
+            scheduleRestart(after: 2.5)
         }
     }
 
@@ -166,6 +244,7 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
             options: [.duckOthers, .defaultToSpeaker, .allowBluetooth]
         )
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        configurePreferredInput(audioSession)
 
         guard audioSession.isInputAvailable else {
             throw NSError(domain: "SpeechManager", code: -1,
@@ -195,8 +274,9 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         //    Skip zero-length buffers — they produce AVAudioBuffer mDataByteSize == 0 warnings
         //    and feed empty audio to the recogniser, causing spurious "No speech" restarts.
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: fmt) { [weak self] buf, _ in
-            guard buf.frameLength > 0 else { return }
-            self?.request?.append(buf)
+            guard let self, buf.frameLength > 0 else { return }
+            self.processWakeWordPCM(buf)
+            self.request?.append(buf)
         }
 
         fresh.prepare()
@@ -243,6 +323,19 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
 
         if let error {
             let desc = (error as NSError).localizedDescription
+            let isCancelled = desc.lowercased().contains("canceled") || desc.contains("1110")
+            // iOS can cancel recognition while we're in .awake (especially across
+            // route/background transitions). If we already heard text, salvage it.
+            if isCancelled, stage == .awake {
+                let q = queryAfterWakeWord(in: liveText.lowercased())
+                if !q.isEmpty {
+                    fireQuery(q)
+                    return
+                }
+                // No usable query captured — return to idle before restart.
+                stage = .idle
+                updateStatusForStage()
+            }
             // "No speech detected" is expected when we manually stop the request — not a real error
             if !desc.contains("No speech") && !desc.contains("1110") {
                 log("Recognition error: \(desc)")
@@ -257,6 +350,7 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         stage      = .awake
         statusText = "Yes? I'm listening…"
         liveText   = ""
+        playWakeDetectedSound()
         log("Stage → awake")
 
         awakeTimeoutItem?.cancel()
@@ -274,6 +368,7 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         awakeTimeoutItem?.cancel()
         stage      = .idle
         statusText = "Processing…"
+        playProcessingStartedSound()
         onWakeWordQuery?(query)
     }
 
@@ -290,10 +385,13 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
 
     private func scheduleRestart(after delay: Double = 0.4) {
         tearDown()
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+        restartWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
             guard let self, self.isListening, !self.speakingTTS else { return }
             self.beginSession()
         }
+        restartWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
     // MARK: - Teardown (discards the engine; next session gets a fresh one)
@@ -315,6 +413,99 @@ class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet.punctuationCharacters)
             .trimmingCharacters(in: .whitespaces)
+    }
+
+    private func configurePreferredInput(_ audioSession: AVAudioSession) {
+        guard preferBluetoothHFPInput else { return }
+        let inputs = audioSession.availableInputs ?? []
+        if let hfp = inputs.first(where: { $0.portType == .bluetoothHFP }) {
+            do {
+                try audioSession.setPreferredInput(hfp)
+                log("Preferred input set: \(hfp.portName) [bluetoothHFP]")
+            } catch {
+                log("Failed to set bluetoothHFP input: \(error.localizedDescription)")
+            }
+        } else {
+            log("bluetoothHFP input not available; using default route")
+        }
+    }
+
+    private func configureAudioSessionForTTS() {
+        let audioSession = AVAudioSession.sharedInstance()
+        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+        try? audioSession.setCategory(
+            .playback,
+            mode: .default,
+            options: [.duckOthers]
+        )
+        try? audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+    }
+
+    @objc private func handleAudioSessionInterruption(_ note: Notification) {
+        guard continuousListeningRequested else { return }
+        guard let info = note.userInfo,
+              let rawType = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+        if type == .ended {
+            scheduleResumeIfNeeded(delay: 0.5)
+        }
+    }
+
+    @objc private func handleAudioRouteChange(_ note: Notification) {
+        guard continuousListeningRequested else { return }
+        // Re-arm after route switches (BT reconnect, background transitions), but debounce
+        // aggressively to avoid restart loops while the route is still churning.
+        scheduleResumeIfNeeded(delay: 1.0)
+    }
+
+    private func scheduleResumeIfNeeded(delay: TimeInterval) {
+        guard continuousListeningRequested, !isListening, !speakingTTS else { return }
+        resumeWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.resumeContinuousWakeListeningIfRequested()
+        }
+        resumeWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    /// Convert AVAudioPCMBuffer to Int16 mono frames and feed the local wake-word engine.
+    /// Detection currently uses a placeholder engine; hook Porcupine here later.
+    private func processWakeWordPCM(_ buffer: AVAudioPCMBuffer) {
+        let frameCount = Int(buffer.frameLength)
+        guard frameCount > 0 else { return }
+
+        var pcm: [Int16] = []
+        pcm.reserveCapacity(frameCount)
+
+        // Common iOS capture format: float32
+        if let channels = buffer.floatChannelData {
+            let c0 = channels[0]
+            for i in 0..<frameCount {
+                let clamped = max(-1.0, min(1.0, c0[i]))
+                pcm.append(Int16(clamped * Float(Int16.max)))
+            }
+        } else if let channels = buffer.int16ChannelData {
+            // If the hardware already gives int16, forward directly.
+            let c0 = channels[0]
+            for i in 0..<frameCount { pcm.append(c0[i]) }
+        } else {
+            return
+        }
+
+        guard wakeWordEngine.process(frame: pcm) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.stage == .idle else { return }
+            self.log("Wake word detected by local engine")
+            self.becomeAwake()
+        }
+    }
+
+    private func playWakeDetectedSound() {
+        AudioServicesPlaySystemSound(1113) // short "ack" tone
+    }
+
+    private func playProcessingStartedSound() {
+        AudioServicesPlaySystemSound(1103) // subtle click/tock
     }
 
     private func log(_ msg: String) { print("[SpeechManager] \(msg)") }

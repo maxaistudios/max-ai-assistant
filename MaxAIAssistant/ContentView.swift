@@ -5,6 +5,7 @@ import Network
 import CoreLocation
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
 
     // MARK: - Stream state
     @State private var statusMessage  = "Ready to Connect"
@@ -61,6 +62,8 @@ struct ContentView: View {
     // MARK: - Visual memories
     @State private var showVisualMemories  = false
     @State private var isSavingMemory      = false
+    @State private var resumeMicAfterCapture = false
+    @State private var micAutoStartedByStream = false
     // Dedup guards for auto-indexing captures into visual memory.
     @State private var autoIndexedCaptureKeys: Set<String> = []
     @State private var autoIndexingCaptureKeys: Set<String> = []
@@ -138,6 +141,31 @@ struct ContentView: View {
                 speechManager.onWakeWordQuery = { q in handleQuery(q, image: nil) }
                 // Sync persisted locale to speech manager on launch
                 speechManager.speechLocale = speechLocale
+            }
+            .onChange(of: isStreaming) { _, streaming in
+                // Route continuous wake listening through the glasses microphone
+                // whenever the glasses stream is connected.
+                if streaming {
+                    if !speechManager.isListening {
+                        speechManager.onWakeWordQuery = { q in handleQuery(q, image: nil) }
+                        speechManager.startContinuousWakeListening(preferBluetoothHFP: true)
+                        micAutoStartedByStream = true
+                    }
+                } else {
+                    // Do not forcibly stop wake listening on stream disconnect.
+                    // Users expect the mic toggle intent to persist across reconnects.
+                    micAutoStartedByStream = false
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    // Recover from background/audio interruptions where UI may still
+                    // show active intent but session was torn down by the system.
+                    if speechManager.isContinuousWakeRequested && !speechManager.isListening {
+                        speechManager.onWakeWordQuery = { q in handleQuery(q, image: nil) }
+                        speechManager.resumeContinuousWakeListeningIfRequested()
+                    }
+                }
             }
             .animation(.easeInOut(duration: 0.2), value: speechManager.isListening)
         }
@@ -407,6 +435,9 @@ struct ContentView: View {
                 latitude: coord?.latitude,
                 longitude: coord?.longitude
             )
+            // Resume wake listening immediately after the actual capture completes.
+            // Do NOT wait for AI indexing/persistence, which can take seconds.
+            resumeListeningAfterCaptureIfNeeded()
             await createVisualMemoryEntry(
                 for: photo,
                 locationName: locationName,
@@ -415,6 +446,24 @@ struct ContentView: View {
                 captureKey: key
             )
         }
+    }
+
+    @MainActor
+    private func pauseListeningForCaptureIfNeeded() {
+        guard speechManager.isListening else {
+            resumeMicAfterCapture = false
+            return
+        }
+        resumeMicAfterCapture = true
+        speechManager.pauseListeningTemporarily()
+    }
+
+    @MainActor
+    private func resumeListeningAfterCaptureIfNeeded() {
+        guard resumeMicAfterCapture else { return }
+        resumeMicAfterCapture = false
+        speechManager.onWakeWordQuery = { q in handleQuery(q, image: nil) }
+        speechManager.resumeContinuousWakeListeningIfRequested()
     }
 
     /// Location fetch with a 5-second timeout; returns (nil, nil) if unavailable or denied.
@@ -948,7 +997,7 @@ struct ContentView: View {
         // Prevent double-start: bail if already connecting or a session exists
         guard !isConnecting, !isStreaming, streamSession == nil else { return }
         // Avoid AVAudioSession contention between speech recognition and camera/stream setup.
-        if speechManager.isListening { speechManager.stopListening() }
+        pauseListeningForCaptureIfNeeded()
         isConnecting  = true
         statusMessage = "Searching for glasses…"
         triggerLocalNetworkPrompt()
@@ -1065,7 +1114,7 @@ struct ContentView: View {
             }
             return
         }
-        if speechManager.isListening { speechManager.stopListening() }
+        pauseListeningForCaptureIfNeeded()
         isCapturing = true
         let ok = session.capturePhoto(format: .jpeg)
         if !ok {
@@ -1089,7 +1138,7 @@ struct ContentView: View {
     /// • Cancels automatically after 12 s with a clear message if glasses can't connect.
     func quickCapture() {
         guard !isCapturing else { return }
-        if speechManager.isListening { speechManager.stopListening() }
+        pauseListeningForCaptureIfNeeded()
         isCapturing   = true
         statusMessage = "Connecting to glasses…"
         triggerLocalNetworkPrompt()
@@ -1132,6 +1181,7 @@ struct ContentView: View {
         quickFrameToken    = nil
         Task { await quickSession?.stop() }
         quickSession       = nil
+        resumeListeningAfterCaptureIfNeeded()
     }
 
     private func startQuickSession(for deviceId: DeviceIdentifier) {
@@ -1329,11 +1379,13 @@ struct ContentView: View {
 
     func toggleHeyMax() {
         if speechManager.isListening {
-            speechManager.stopListening()
+            resumeMicAfterCapture = false
+            micAutoStartedByStream = false
+            speechManager.stopContinuousWakeListening()
         } else {
-            if apiKey.isEmpty { showSettings = true; return }
+            micAutoStartedByStream = false
             speechManager.onWakeWordQuery = { q in handleQuery(q, image: nil) }
-            speechManager.startListening()
+            speechManager.startContinuousWakeListening(preferBluetoothHFP: true)
         }
     }
 

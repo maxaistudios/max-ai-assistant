@@ -114,7 +114,11 @@ final class AgentBrain: ObservableObject {
         // GPT classifies the message instead of brittle keyword matching.
         // "I look forward to seeing you" → .chat, not .vision
         // "I'm searching for meaning" → .chat, not .search
-        async let intentTask  = aiService.classifyIntent(query: query, hasImage: image != nil)
+        let forcedVision = forceVision && image != nil
+        async let intentTask: OpenAIService.MessageIntent = {
+            if forcedVision { return .vision }
+            return await aiService.classifyIntent(query: query, hasImage: image != nil)
+        }()
         // Read memory on the current actor to avoid forced sync hops into MainActor
         // from detached tasks (which emit "unsafeForcedSync" runtime warnings).
         let memCtx = MemoryStore.shared.context(for: query, topK: 4)
@@ -124,7 +128,7 @@ final class AgentBrain: ObservableObject {
         // we always send the image to GPT regardless of how the intent was classified.
         // This prevents generic questions like "tell me about this" from being
         // silently downgraded to plain chat and losing the image context.
-        let wantsVision = image != nil && (forceVision || intent == .vision)
+        let wantsVision = image != nil && (forcedVision || intent == .vision)
         let wantsSearch = intent == .search || intent == .news
         let wantsNews   = intent == .news
 
