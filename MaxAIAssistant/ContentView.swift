@@ -45,10 +45,14 @@ struct ContentView: View {
     @FocusState private var isInputFocused: Bool
 
     // MARK: - Sheet / navigation
-    @AppStorage("openai_api_key") private var apiKey      = ""
-    @AppStorage("serper_api_key") private var serperKey   = ""
-    @AppStorage("debugMode")      private var debugMode   = false
+    @AppStorage("serper_api_key") private var serperKey    = ""
+    @AppStorage("debugMode")      private var debugMode    = false
     @AppStorage("speechLocale")   private var speechLocale = "en-US"
+    @AppStorage(AIProvider.selectedDefaultsKey) private var selectedProviderRaw = AIProvider.openAI.rawValue
+    @AppStorage("openai_model") private var openAIModel = AIProvider.openAI.defaultModel
+    @AppStorage("gemini_model") private var geminiModel = AIProvider.gemini.defaultModel
+    @State private var openAIKeyInput = ""
+    @State private var geminiKeyInput = ""
     @State private var showSettings    = false
     @State private var showPhotoAsk    = false
     // Internal flag used when auto-capturing a frame for "what do I see" style queries.
@@ -73,6 +77,31 @@ struct ContentView: View {
     /// True when there is active visual content to display in the viewfinder.
     private var hasActiveMedia: Bool {
         capturedPhoto != nil || currentFrame != nil || isCapturing || isStreaming
+    }
+
+    private var selectedProvider: AIProvider {
+        AIProvider(rawValue: selectedProviderRaw) ?? .openAI
+    }
+
+    private func persistAISettings() {
+        selectedProviderRaw = selectedProvider.rawValue
+        let openAITrimmed = openAIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let geminiTrimmed = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if openAITrimmed.isEmpty {
+            KeychainHelper.delete(key: KeychainHelper.openAIKeyName)
+        } else {
+            KeychainHelper.write(key: KeychainHelper.openAIKeyName, value: openAITrimmed)
+        }
+        if geminiTrimmed.isEmpty {
+            KeychainHelper.delete(key: KeychainHelper.geminiKeyName)
+        } else {
+            KeychainHelper.write(key: KeychainHelper.geminiKeyName, value: geminiTrimmed)
+        }
+    }
+
+    private func loadAISettingsFromKeychain() {
+        openAIKeyInput = KeychainHelper.read(key: KeychainHelper.openAIKeyName) ?? ""
+        geminiKeyInput = KeychainHelper.read(key: KeychainHelper.geminiKeyName) ?? ""
     }
 
     var body: some View {
@@ -141,6 +170,7 @@ struct ContentView: View {
                 speechManager.onWakeWordQuery = { q in handleQuery(q, image: nil) }
                 // Sync persisted locale to speech manager on launch
                 speechManager.speechLocale = speechLocale
+                loadAISettingsFromKeychain()
             }
             .onChange(of: isStreaming) { _, streaming in
                 // Route continuous wake listening through the glasses microphone
@@ -371,8 +401,6 @@ struct ContentView: View {
         includeChatConfirmation: Bool,
         captureKey: String?
     ) async {
-        // Ensure API key is synced before AI call.
-        OpenAIService.shared.apiKey = apiKey
         let knownFacts = knownFactsContext()
 
         let analysis = await AgentBrain.shared.analyzeVisualMemory(
@@ -855,10 +883,38 @@ struct ContentView: View {
 
                 // ── 2. AI Settings ──────────────────────────────────────────
                 Section {
+                    Picker("Provider", selection: $selectedProviderRaw) {
+                        ForEach(AIProvider.allCases) { provider in
+                            Text(provider.displayName).tag(provider.rawValue)
+                        }
+                    }
+                    .onChange(of: selectedProviderRaw) { _, _ in
+                        if selectedProviderRaw != AIProvider.gemini.rawValue &&
+                            selectedProviderRaw != AIProvider.openAI.rawValue {
+                            selectedProviderRaw = AIProvider.openAI.rawValue
+                        }
+                    }
+
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("OpenAI API Key").font(.caption).foregroundColor(.secondary)
-                        SecureField("sk-...", text: $apiKey)
+                        Text(selectedProvider == .openAI ? "OpenAI API Key" : "Gemini API Key")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        SecureField(
+                            selectedProvider == .openAI ? "sk-..." : "Enter Gemini API key",
+                            text: selectedProvider == .openAI ? $openAIKeyInput : $geminiKeyInput
+                        )
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(selectedProvider == .openAI ? "OpenAI Model" : "Gemini Model")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextField(
+                            "Model name",
+                            text: selectedProvider == .openAI ? $openAIModel : $geminiModel
+                        )
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Serper API Key (web search)").font(.caption).foregroundColor(.secondary)
@@ -866,7 +922,7 @@ struct ContentView: View {
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
                 } header: { Text("AI Settings") } footer: {
-                    Text("OpenAI: platform.openai.com/api-keys\nSerper: serper.dev — enables web search & news in chat")
+                    Text("Provider key is stored in iOS Keychain. OpenAI: platform.openai.com/api-keys · Gemini: aistudio.google.com/apikey · Serper: serper.dev")
                 }
 
                 // ── 3. Voice & Language ─────────────────────────────────────
@@ -965,8 +1021,14 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { showSettings = false }
+                    Button("Done") {
+                        persistAISettings()
+                        showSettings = false
+                    }
                 }
+            }
+            .onAppear {
+                loadAISettingsFromKeychain()
             }
         }
     }
@@ -1269,7 +1331,6 @@ struct ContentView: View {
     // MARK: - Voice for captured photo
 
     func startVoiceForPhoto() {
-        OpenAIService.shared.apiKey = apiKey
         speechManager.onWakeWordQuery = { [self] query in
             speechManager.onWakeWordQuery = { q in handleQuery(q, image: nil) }
             handleQuery(query, image: capturedPhoto)
@@ -1357,7 +1418,6 @@ struct ContentView: View {
 
             isAnalyzing = true
             aiResponse  = frameToUse != nil ? "Looking…" : "Thinking…"
-            OpenAIService.shared.apiKey = apiKey
 
             let dm = debugMode     // capture for background Task
             do {
@@ -1766,7 +1826,11 @@ struct DebugCardView: View {
                 Divider().background(Color.orange.opacity(0.3))
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        debugRow("Model", "gpt-4o-mini\(info.hasImage ? " + Vision" : "")")
+                        let provider = AIProvider.selected
+                        let model = UserDefaults.standard.string(forKey: provider.modelDefaultsKey)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        let resolvedModel = (model?.isEmpty == false ? model! : provider.defaultModel)
+                        debugRow("Model", "\(provider.displayName) · \(resolvedModel)\(info.hasImage ? " + Vision" : "")")
                         debugRow("Tokens", "\(info.promptTokens) in · \(info.completionTokens) out · \(info.promptTokens + info.completionTokens) total")
                         debugRow("Time", "\(info.processingMs) ms")
                         debugRow("Memory context",

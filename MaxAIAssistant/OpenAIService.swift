@@ -1,13 +1,111 @@
 import UIKit
 import Foundation
 
+enum AIProvider: String, CaseIterable, Identifiable {
+    case openAI = "openai"
+    case gemini = "gemini"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .openAI: return "OpenAI"
+        case .gemini: return "Gemini"
+        }
+    }
+
+    var defaultModel: String {
+        switch self {
+        case .openAI: return "gpt-4o-mini"
+        case .gemini: return "gemini-2.5-flash"
+        }
+    }
+
+    var chatCompletionsURL: URL {
+        switch self {
+        case .openAI:
+            return URL(string: "https://api.openai.com/v1/chat/completions")!
+        case .gemini:
+            return URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")!
+        }
+    }
+
+    var keychainKeyName: String {
+        switch self {
+        case .openAI: return KeychainHelper.openAIKeyName
+        case .gemini: return KeychainHelper.geminiKeyName
+        }
+    }
+
+    var modelDefaultsKey: String {
+        switch self {
+        case .openAI: return "openai_model"
+        case .gemini: return "gemini_model"
+        }
+    }
+
+    var legacyAPIKeyDefaultsKey: String {
+        switch self {
+        case .openAI: return "openai_api_key"
+        case .gemini: return "gemini_api_key"
+        }
+    }
+
+    static let selectedDefaultsKey = "ai_provider"
+
+    static var selected: AIProvider {
+        let raw = UserDefaults.standard.string(forKey: selectedDefaultsKey)
+        return AIProvider(rawValue: raw ?? "") ?? .openAI
+    }
+}
+
 /// Low-level OpenAI HTTP client.
 /// High-level orchestration lives in AgentBrain.
 class OpenAIService {
     static let shared = OpenAIService()
+    private static var geminiRateLimitedUntil: Date?
+    private static let geminiRateLimitLock = NSLock()
 
     // Internal (not private) so ProxyAIService can subclass from another file.
     init() {}
+
+    private static func setGeminiRateLimitCooldown(seconds: Int) {
+        guard seconds > 0 else { return }
+        geminiRateLimitLock.lock()
+        geminiRateLimitedUntil = Date().addingTimeInterval(TimeInterval(seconds))
+        geminiRateLimitLock.unlock()
+    }
+
+    private static func currentGeminiCooldownSeconds() -> Int? {
+        geminiRateLimitLock.lock()
+        defer { geminiRateLimitLock.unlock() }
+        guard let until = geminiRateLimitedUntil else { return nil }
+        let remaining = Int(ceil(until.timeIntervalSinceNow))
+        return remaining > 0 ? remaining : nil
+    }
+
+    private static func parseRetryAfterSeconds(from data: Data) -> Int? {
+        guard let raw = String(data: data, encoding: .utf8) else { return nil }
+        // Prefer structured RetryInfo if present: "retryDelay": "34s"
+        if let range = raw.range(of: "\"retryDelay\"\\s*:\\s*\"(\\d+)s\"", options: .regularExpression) {
+            let match = String(raw[range])
+            if let num = match.components(separatedBy: CharacterSet.decimalDigits.inverted)
+                .first(where: { !$0.isEmpty }),
+               let seconds = Int(num) {
+                return seconds
+            }
+        }
+        // Fallback for text form: "Please retry in 34.46s."
+        if let range = raw.range(of: "Please retry in\\s+([0-9]+)", options: .regularExpression) {
+            let match = String(raw[range])
+            if let num = match.components(separatedBy: CharacterSet.decimalDigits.inverted)
+                .first(where: { !$0.isEmpty }),
+               let seconds = Int(num) {
+                return seconds
+            }
+        }
+        return nil
+    }
 
     // MARK: - Credential resolution
     //
@@ -25,17 +123,31 @@ class OpenAIService {
             // Auto-migrate to Keychain on every external write so the key is secured
             // even if callers still use the legacy `apiKey =` pattern.
             if !apiKey.isEmpty {
-                KeychainHelper.write(key: KeychainHelper.openAIKeyName, value: apiKey)
+                let provider = currentProvider
+                KeychainHelper.write(key: provider.keychainKeyName, value: apiKey)
             }
         }
     }
 
     /// The credential that is actually used for authentication.
     /// Subclasses override this to return a different secret (e.g. proxy bearer token).
+    var currentProvider: AIProvider {
+        if self is ProxyAIService { return .openAI }
+        return AIProvider.selected
+    }
+
+    var resolvedModel: String {
+        let provider = currentProvider
+        let model = UserDefaults.standard.string(forKey: provider.modelDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return model.isEmpty ? provider.defaultModel : model
+    }
+
     var resolvedKey: String {
-        if let k = KeychainHelper.read(key: KeychainHelper.openAIKeyName) { return k }
+        let provider = currentProvider
+        if let k = KeychainHelper.read(key: provider.keychainKeyName) { return k }
         if !apiKey.isEmpty { return apiKey }
-        return UserDefaults.standard.string(forKey: "openai_api_key") ?? ""
+        return UserDefaults.standard.string(forKey: provider.legacyAPIKeyDefaultsKey) ?? ""
     }
 
     // MARK: - Result type (includes token usage for debug mode)
@@ -49,10 +161,11 @@ class OpenAIService {
 
     // MARK: - Multi-turn chat (full result — used by AgentBrain)
 
-    /// Sends a full messages array to gpt-4o-mini and returns text + token usage.
+    /// Sends a full messages array and returns text + token usage.
     /// When `hasImage` is true, the last user message is wrapped with a vision content block.
     func chatFull(messages: [[String: Any]], hasImage: Bool, image: UIImage?, jsonMode: Bool = false) async throws -> ChatResult {
-        guard !resolvedKey.isEmpty else { throw ServiceError.missingAPIKey }
+        let provider = currentProvider
+        guard !resolvedKey.isEmpty else { throw ServiceError.missingAPIKey(provider: provider) }
 
         var finalMessages = messages
 
@@ -75,11 +188,13 @@ class OpenAIService {
         }
 
         var body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 250,
             "messages": finalMessages
         ]
-        if jsonMode { body["response_format"] = ["type": "json_object"] }
+        if jsonMode, currentProvider == .openAI {
+            body["response_format"] = ["type": "json_object"]
+        }
 
         return try await postFull(body: body)
     }
@@ -112,7 +227,7 @@ class OpenAIService {
         """
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 200,
             "temperature": 0,
             "messages": [["role": "user", "content": prompt]]
@@ -159,7 +274,7 @@ class OpenAIService {
         """
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 500,
             "temperature": 0,
             "messages": [["role": "user", "content": prompt]]
@@ -223,7 +338,7 @@ class OpenAIService {
         """
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 500,
             "temperature": 0,
             "messages": [["role": "user", "content": prompt]]
@@ -284,7 +399,7 @@ class OpenAIService {
         """
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 5,
             "temperature": 0,
             "messages": [["role": "user", "content": prompt]]
@@ -319,7 +434,7 @@ class OpenAIService {
         """
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 3,
             "temperature": 0,
             "messages": [["role": "user", "content": prompt]]
@@ -398,7 +513,7 @@ class OpenAIService {
         ]]
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 500,
             "temperature": 0,
             "messages": messages
@@ -451,7 +566,7 @@ class OpenAIService {
         ]
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 30,
             "temperature": 0,
             "messages": messages
@@ -481,7 +596,7 @@ class OpenAIService {
         """
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 5,
             "temperature": 0,
             "messages": [["role": "user", "content": prompt]]
@@ -512,7 +627,7 @@ class OpenAIService {
         """
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 120,
             "temperature": 0,
             "messages": [["role": "user", "content": prompt]]
@@ -533,13 +648,14 @@ class OpenAIService {
     // MARK: - Quick single-turn (photo Q&A without brain context)
 
     func analyzePhoto(_ image: UIImage, question: String) async throws -> String {
-        guard !resolvedKey.isEmpty else { throw ServiceError.missingAPIKey }
+        let provider = currentProvider
+        guard !resolvedKey.isEmpty else { throw ServiceError.missingAPIKey(provider: provider) }
         guard let jpeg = image.jpegData(compressionQuality: 0.7) else {
             throw ServiceError.imageEncodingFailed
         }
 
         let body: [String: Any] = [
-            "model": "gpt-4o-mini",
+            "model": resolvedModel,
             "max_tokens": 150,
             "messages": [[
                 "role": "user",
@@ -568,7 +684,11 @@ class OpenAIService {
     // one method to swap the transport layer while inheriting all prompt-building logic.
 
     func postFull(body: [String: Any]) async throws -> ChatResult {
-        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+        let provider = currentProvider
+        if provider == .gemini, let remaining = Self.currentGeminiCooldownSeconds() {
+            throw ServiceError.rateLimited(provider: provider, retryAfterSeconds: remaining)
+        }
+        let url = provider.chatCompletionsURL
         var req = URLRequest(url: url)
         req.httpMethod  = "POST"
         req.timeoutInterval = 25
@@ -576,13 +696,35 @@ class OpenAIService {
         req.setValue("application/json",  forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        func executeRequest() async throws -> (Data, URLResponse) {
+            try await URLSession.shared.data(for: req)
+        }
+
+        var (data, response) = try await executeRequest()
+
+        // Gemini occasionally returns transient 503 (high demand). Retry once with
+        // a short backoff to reduce user-visible failures without masking real issues.
+        if provider == .gemini,
+           let http = response as? HTTPURLResponse,
+           http.statusCode == 503 {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            let retried = try await executeRequest()
+            data = retried.0
+            response = retried.1
+        }
 
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             if let raw = String(data: data, encoding: .utf8) {
-                print("[OpenAI] HTTP \(http.statusCode): \(raw)")
+                print("[\(provider.displayName)] HTTP \(http.statusCode): \(raw)")
             }
-            throw ServiceError.httpError(http.statusCode)
+            if provider == .gemini, http.statusCode == 429 {
+                let retryAfter = Self.parseRetryAfterSeconds(from: data)
+                if let retryAfter {
+                    Self.setGeminiRateLimitCooldown(seconds: retryAfter)
+                }
+                throw ServiceError.rateLimited(provider: provider, retryAfterSeconds: retryAfter)
+            }
+            throw ServiceError.httpError(http.statusCode, provider: provider)
         }
 
         let rawJSON = String(data: data, encoding: .utf8) ?? ""
@@ -603,14 +745,39 @@ class OpenAIService {
     // MARK: - Errors
 
     enum ServiceError: LocalizedError {
-        case missingAPIKey, imageEncodingFailed, httpError(Int), decodingFailed
+        case missingAPIKey(provider: AIProvider)
+        case imageEncodingFailed
+        case httpError(Int, provider: AIProvider)
+        case rateLimited(provider: AIProvider, retryAfterSeconds: Int?)
+        case decodingFailed
+
         var errorDescription: String? {
             switch self {
-            case .missingAPIKey:       return "Add your OpenAI API key in Settings."
+            case .missingAPIKey(let provider):
+                return "Add your \(provider.displayName) API key in Settings."
             case .imageEncodingFailed: return "Failed to encode the camera frame."
-            case .httpError(401):      return "Invalid API key — check platform.openai.com/api-keys."
-            case .httpError(429):      return "OpenAI quota exceeded — add credits at platform.openai.com/billing."
-            case .httpError(let c):    return "OpenAI error \(c) — please try again."
+            case .httpError(401, let provider):
+                if provider == .gemini {
+                    return "Invalid Gemini API key."
+                }
+                return "Invalid OpenAI API key — check platform.openai.com/api-keys."
+            case .httpError(429, let provider):
+                if provider == .gemini {
+                    return "Gemini quota exceeded — check your Google AI usage limits."
+                }
+                return "OpenAI quota exceeded — add credits at platform.openai.com/billing."
+            case .rateLimited(let provider, let retryAfter):
+                if let retryAfter, retryAfter > 0 {
+                    return "\(provider.displayName) rate limit reached. Please try again in about \(retryAfter) seconds."
+                }
+                return "\(provider.displayName) rate limit reached. Please try again shortly."
+            case .httpError(503, let provider):
+                if provider == .gemini {
+                    return "Gemini is temporarily overloaded right now. Please try again in a moment."
+                }
+                return "\(provider.displayName) is temporarily unavailable. Please try again."
+            case .httpError(let c, let provider):
+                return "\(provider.displayName) error \(c) — please try again."
             case .decodingFailed:      return "Could not read the AI response."
             }
         }

@@ -17,6 +17,9 @@ enum KeychainHelper {
     /// OpenAI API key — used by LocalAIService (OSS target).
     static let openAIKeyName      = "com.maxai.openai_api_key"
 
+    /// Google Gemini API key — used when Gemini provider is selected.
+    static let geminiKeyName      = "com.maxai.gemini_api_key"
+
     /// Serper.dev API key — used by SerperService.
     static let serperKeyName      = "com.maxai.serper_api_key"
 

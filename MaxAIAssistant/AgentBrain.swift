@@ -40,7 +40,7 @@ struct ChatMessage: Identifiable {
 /// Every turn:
 ///   1. Retrieves all three memory tiers (facts / episodes / summaries)
 ///   2. Builds system prompt: soul + memories + preferences + recent history
-///   3. Calls gpt-4o-mini in JSON mode → {answer, followUps}
+///   3. Calls configured chat-completions model in JSON mode → {answer, followUps}
 ///   4. Stores Q&A + extracted facts as separate searchable memories
 ///   5. Triggers background episode summarisation when buffer grows large
 @MainActor
